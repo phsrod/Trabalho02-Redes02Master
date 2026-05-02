@@ -12,3 +12,8 @@ def auth_token_hex(matricula: str, nome: str) -> bytes:
  
 def build_auth_line(matricula: str, nome: str) -> bytes:
     return AUTH_PREFIX + auth_token_hex(matricula, nome) + b"\r\n"
+ 
+ 
+def verify_auth_line(line: bytes, matricula: str, nome: str) -> bool:
+    expected = build_auth_line(matricula, nome)
+    return line.rstrip(b"\r\n") == expected.rstrip(b"\r\n")
