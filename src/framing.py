@@ -57,3 +57,40 @@ def parse_frame_verify(
     if crc32_payload(payload) != crc_exp:
         raise ValueError("checksum/CRC32 divergente")
     return seq, MsgType(typ), payload
+ 
+ 
+class TcpStreamDecoder:
+    """Reconstitui quadros a partir de um stream TCP byte a byte."""
+ 
+    def __init__(self, matricula: str, nome: str) -> None:
+        self._matricula = matricula
+        self._nome = nome
+        self._buf = bytearray()
+ 
+    def feed(self, chunk: bytes) -> list[tuple[int, MsgType, bytes]]:
+        self._buf.extend(chunk)
+        out: list[tuple[int, MsgType, bytes]] = []
+        while True:
+            if len(self._buf) < len(AUTH_PREFIX):
+                break
+            if not self._buf[: len(AUTH_PREFIX)] == AUTH_PREFIX:
+                raise ValueError("stream TCP: esperado X-Custom-Auth")
+            crlf = self._buf.find(b"\r\n", len(AUTH_PREFIX))
+            if crlf < 0:
+                break
+            body_start = crlf + 2
+            if len(self._buf) < body_start + HDR_LEN:
+                break
+            seq, typ, plen, _crc = STRUCT_HDR.unpack(
+                bytes(self._buf[body_start : body_start + HDR_LEN])
+            )
+            total = body_start + HDR_LEN + plen
+            if len(self._buf) < total:
+                break
+            frame = bytes(self._buf[:total])
+            del self._buf[:total]
+            seq, typ, payload = parse_frame_verify(
+                frame, self._matricula, self._nome, require_auth=True
+            )
+            out.append((seq, typ, payload))
+        return out
