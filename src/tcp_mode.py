@@ -80,3 +80,65 @@ def tcp_send_file(
  
     elapsed = time.monotonic() - t0
     return elapsed, bytes_sent
+ 
+ 
+def tcp_receive_loop(
+    conn: socket.socket,
+    matricula: str,
+    nome: str,
+    out_dir: str,
+    progress: Callable[[str], None] | None = None,
+) -> tuple[int, str]:
+    """Recebe um arquivo por conexão TCP; retorna (bytes escritos, caminho salvo)."""
+    dec = TcpStreamDecoder(matricula, nome)
+    out_file = None
+    path_saved = ""
+    bytes_written = 0
+    next_data_seq = 1
+    meta_ok = False
+ 
+    def handle(seq: int, typ: MsgType, payload: bytes) -> bool:
+        nonlocal out_file, path_saved, bytes_written, next_data_seq, meta_ok
+        if typ == MsgType.META:
+            meta = json.loads(payload.decode("utf-8"))
+            safe = os.path.basename(meta["name"])
+            path_saved = os.path.join(out_dir, safe)
+            out_file = open(path_saved, "wb")
+            meta_ok = True
+            next_data_seq = 1
+            conn.sendall(pack_frame(matricula, nome, seq, MsgType.ACK, b""))
+            return False
+        if typ == MsgType.DATA:
+            if not meta_ok or out_file is None:
+                raise RuntimeError("DATA antes de META")
+            if seq == next_data_seq - 1:
+                conn.sendall(pack_frame(matricula, nome, seq, MsgType.ACK, b""))
+                return False
+            if seq != next_data_seq:
+                raise RuntimeError(f"sequência inesperada: {seq} (esperado {next_data_seq})")
+            out_file.write(payload)
+            bytes_written += len(payload)
+            next_data_seq += 1
+            conn.sendall(pack_frame(matricula, nome, seq, MsgType.ACK, b""))
+            if progress:
+                progress(f"recebido {bytes_written} B")
+            return False
+        if typ == MsgType.FIN:
+            conn.sendall(pack_frame(matricula, nome, seq, MsgType.ACK, b""))
+            return True
+        raise RuntimeError(f"tipo inesperado: {typ}")
+ 
+    while True:
+        raw = conn.recv(65536)
+        if not raw:
+            break
+        for seq, mtyp, payload in dec.feed(raw):
+            done = handle(seq, mtyp, payload)
+            if done:
+                if out_file:
+                    out_file.close()
+                return bytes_written, path_saved
+ 
+    if out_file:
+        out_file.close()
+    raise ConnectionError("fluxo incompleto")
