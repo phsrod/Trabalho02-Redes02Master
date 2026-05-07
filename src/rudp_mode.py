@@ -55,10 +55,8 @@ def rudp_send_file(
                     except ValueError:
                         continue
                     if atyp == MsgType.ACK and aseq == seq:
-                        # ACK recebido para este seq
                         logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "client", "event": "ack_received", "seq": aseq}))
                         return
-                # não recebeu ACK dentro do timeout -> vai retransmitir
                 if attempt < max_retries - 1:
                     logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "client", "event": "retransmit", "seq": seq, "attempt": attempt + 1}))
                 else:
@@ -87,3 +85,74 @@ def rudp_send_file(
  
     elapsed = time.monotonic() - t0
     return elapsed, bytes_sent
+ 
+ 
+def rudp_receive_one_file(
+    sock: socket.socket,
+    matricula: str,
+    nome: str,
+    out_dir: str,
+    progress: Callable[[str], None] | None = None,
+) -> tuple[int, str]:
+    out_file = None
+    path_saved = ""
+    bytes_written = 0
+    next_data_seq = 1
+    meta_ok = False
+ 
+    while True:
+        data, _addr = sock.recvfrom(65535)
+        try:
+            seq, typ, payload = parse_frame_verify(data, matricula, nome)
+        except ValueError:
+            continue
+        logger = logging.getLogger("transfers")
+ 
+        if typ == MsgType.META:
+            meta = json.loads(payload.decode("utf-8"))
+            safe = os.path.basename(meta["name"])
+            path_saved = os.path.join(out_dir, safe)
+            if out_file:
+                out_file.close()
+            out_file = open(path_saved, "wb")
+            meta_ok = True
+            next_data_seq = 1
+            ack = pack_frame(matricula, nome, seq, MsgType.ACK, b"")
+            sock.sendto(ack, _addr)
+            logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "recv", "seq": seq, "type": "META"}))
+            logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "ack_sent", "seq": seq}))
+            continue
+ 
+        if typ == MsgType.DATA:
+            if not meta_ok or out_file is None:
+                continue
+            if seq == next_data_seq - 1:
+                ack = pack_frame(matricula, nome, seq, MsgType.ACK, b"")
+                sock.sendto(ack, _addr)
+                logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "duplicate", "seq": seq}))
+                logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "ack_sent", "seq": seq}))
+                continue
+            if seq != next_data_seq:
+                continue
+            logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "recv", "seq": seq, "type": "DATA", "payload_len": len(payload)}))
+            out_file.write(payload)
+            bytes_written += len(payload)
+            next_data_seq += 1
+            ack = pack_frame(matricula, nome, seq, MsgType.ACK, b"")
+            sock.sendto(ack, _addr)
+            logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "ack_sent", "seq": seq}))
+            if progress:
+                progress(f"recebido {bytes_written} B")
+            continue
+ 
+        if typ == MsgType.FIN:
+            ack = pack_frame(matricula, nome, seq, MsgType.ACK, b"")
+            sock.sendto(ack, _addr)
+            logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "recv", "seq": seq, "type": "FIN"}))
+            logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "ack_sent", "seq": seq}))
+            if out_file:
+                out_file.close()
+            logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "end", "bytes_written": bytes_written, "path": path_saved}))
+            return bytes_written, path_saved
+ 
+    raise RuntimeError("socket fechado inesperadamente")
