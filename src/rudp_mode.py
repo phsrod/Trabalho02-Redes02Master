@@ -156,3 +156,11 @@ def rudp_receive_one_file(
             return bytes_written, path_saved
  
     raise RuntimeError("socket fechado inesperadamente")
+ 
+ 
+def rudp_run_server(host: str, port: int, out_dir: str, matricula: str, nome: str) -> None:
+    os.makedirs(out_dir, exist_ok=True)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind((host, port))
+        while True:
+            rudp_receive_one_file(sock, matricula, nome, out_dir)
