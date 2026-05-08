@@ -21,6 +21,25 @@ def main() -> None:
     args = p.parse_args()
     matricula, nome = require_identity()
  
+    # initialize logger writing to transfers.log (shared file)
+    target_dir = os.environ.get("RESULTS_DIR") or ("/data" if os.path.isdir("/data") else "results")
+    os.makedirs(target_dir, exist_ok=True)
+    log_path = os.path.join(target_dir, "transfers.log")
+    logger = logging.getLogger("transfers")
+    if not logger.handlers:
+        fh = logging.FileHandler(log_path)
+        fh.setFormatter(logging.Formatter("%(message)s"))
+        logger.setLevel(logging.INFO)
+        logger.addHandler(fh)
+ 
+    logger.info(json.dumps({
+        "ts": time.time(),
+        "mode": args.mode,
+        "role": "server",
+        "event": "start",
+        "peer": f"{args.host}:{args.port}",
+    }))
+ 
     if args.mode == "tcp":
         tcp_run_server(args.host, args.port, args.out_dir, matricula, nome)
     else:
