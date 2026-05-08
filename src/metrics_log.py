@@ -1,5 +1,4 @@
 """Registro de métricas para cruzamento com capturas (Wireshark/tcpdump)."""
- 
 from __future__ import annotations
  
 import csv
