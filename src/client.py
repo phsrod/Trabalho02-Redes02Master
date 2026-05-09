@@ -31,6 +31,27 @@ def main() -> None:
     if not os.path.isfile(path):
         raise SystemExit(f"Arquivo inexistente: {path}")
  
+    # initialize simple JSONL logger writing to transfers.log
+    target_dir = os.environ.get("RESULTS_DIR") or ("/data" if os.path.isdir("/data") else "results")
+    os.makedirs(target_dir, exist_ok=True)
+    log_path = os.path.join(target_dir, "transfers.log")
+    logger = logging.getLogger("transfers")
+    if not logger.handlers:
+        fh = logging.FileHandler(log_path)
+        fh.setFormatter(logging.Formatter("%(message)s"))
+        logger.setLevel(logging.INFO)
+        logger.addHandler(fh)
+ 
+    logger.info(json.dumps({
+        "ts": time.time(),
+        "run_id": args.run_id,
+        "mode": args.mode,
+        "scenario": args.scenario,
+        "role": "client",
+        "event": "start",
+        "peer": f"{args.host}:{args.port}",
+    }))
+ 
     if args.mode == "tcp":
         dur, nbytes = tcp_send_file(args.host, args.port, path, matricula, nome)
     else:
@@ -58,6 +79,17 @@ def main() -> None:
         append_csv_row(args.csv, row)
     if args.jsonl:
         log_json_line(args.jsonl, row)
+ 
+    logger.info(json.dumps({
+        "ts": time.time(),
+        "run_id": args.run_id,
+        "mode": args.mode,
+        "scenario": args.scenario,
+        "role": "client",
+        "event": "end",
+        "bytes_app": nbytes,
+        "duration_s": dur,
+    }))
  
  
 if __name__ == "__main__":
