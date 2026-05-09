@@ -1,0 +1,25 @@
+version: "3.8"
+ 
+services:
+  server:
+    build: .
+    container_name: rudp-server
+    command: python3 -m src.server --mode tcp --port 9000 --out /data/inbox
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./results:/data
+ 
+  client:
+    build: .
+    container_name: rudp-client
+    command: sleep infinity
+    depends_on:
+      - server
+    volumes:
+      - ./results:/data
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - MATRICULA=${MATRICULA}
+      - NOME_ALUNO=${NOME_ALUNO}
