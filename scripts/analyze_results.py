@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Generate statistics table from client metrics CSV."""
+"""Generate statistics table and plots from client metrics CSV."""
 from __future__ import annotations
  
 import argparse
 import os
 import sys
  
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import pandas as pd
  
 SCENARIO_ORDER = ("A", "B", "C")
@@ -54,8 +57,58 @@ def _build_summary(df: pd.DataFrame) -> pd.DataFrame:
     return summary
  
  
+def _plot_throughput_bars(df: pd.DataFrame, out_dir: str) -> None:
+    os.makedirs(out_dir, exist_ok=True)
+    summary = _build_summary(df)
+    scenarios = _ordered_values(summary["scenario"].unique(), SCENARIO_ORDER)
+    modes = _ordered_values(summary["mode"].unique(), MODE_ORDER)
+ 
+    for mode in modes:
+        subset = summary[summary["mode"] == mode].copy()
+        if subset.empty:
+            continue
+        means = [subset.loc[subset["scenario"] == s, "throughput_mean"].values[0] if not subset.loc[subset["scenario"] == s].empty else 0 for s in scenarios]
+        stds = [subset.loc[subset["scenario"] == s, "throughput_std"].values[0] if not subset.loc[subset["scenario"] == s].empty else 0 for s in scenarios]
+        fig, ax = plt.subplots(figsize=(8, 5))
+        bars = ax.bar(scenarios, means, yerr=stds, capsize=6, color="#2196F3" if mode == "tcp" else "#FF9800")
+        for bar, val in zip(bars, means):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5, f"{val:.2f}", ha="center", va="bottom", fontsize=9)
+        ax.set_xlabel("Scenario")
+        ax.set_ylabel("Throughput (Mbps)")
+        ax.set_title(f"Throughput per Scenario - {mode.upper()}")
+        ax.grid(axis="y", alpha=0.3)
+        plt.tight_layout()
+        fname = os.path.join(out_dir, f"throughput_{mode}.png")
+        fig.savefig(fname, dpi=150)
+        plt.close(fig)
+        print(f"Saved: {fname}")
+ 
+    # comparison plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    width = 0.35
+    x = range(len(scenarios))
+    for i, mode in enumerate(modes):
+        subset = summary[summary["mode"] == mode]
+        means = [subset.loc[subset["scenario"] == s, "throughput_mean"].values[0] if not subset.loc[subset["scenario"] == s].empty else 0 for s in scenarios]
+        stds = [subset.loc[subset["scenario"] == s, "throughput_std"].values[0] if not subset.loc[subset["scenario"] == s].empty else 0 for s in scenarios]
+        offset = (i - 0.5) * width
+        bars = ax.bar([p + offset for p in x], means, width, yerr=stds, capsize=4, label=mode.upper(), color=["#2196F3", "#FF9800"][i])
+    ax.set_xlabel("Scenario")
+    ax.set_ylabel("Throughput (Mbps)")
+    ax.set_title("TCP vs R-UDP Throughput Comparison")
+    ax.set_xticks(x)
+    ax.set_xticklabels(scenarios)
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    fname = os.path.join(out_dir, "throughput_comparison.png")
+    fig.savefig(fname, dpi=150)
+    plt.close(fig)
+    print(f"Saved: {fname}")
+ 
+ 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Generate statistics from metrics CSV.")
+    p = argparse.ArgumentParser(description="Generate statistics and plots from metrics CSV.")
     p.add_argument("csv_path", help="CSV with columns: scenario, mode, duration_sec, throughput_mbps")
     p.add_argument("--out-dir", default="results/plots")
     args = p.parse_args()
@@ -73,6 +126,8 @@ def main() -> None:
     print("Aggregated statistics per scenario and mode:\n")
     print(summary.to_string(index=False))
     print(f"\nSummary saved to: {os.path.join(args.out_dir, 'stats_summary.csv')}")
+ 
+    _plot_throughput_bars(df, args.out_dir)
  
  
 if __name__ == "__main__":
