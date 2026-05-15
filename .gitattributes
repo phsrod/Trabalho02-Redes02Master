@@ -1,0 +1,21 @@
+# Normalize line endings for cross-platform (Windows/Linux/macOS)
+* text=auto
+ 
+# Shell scripts must stay LF for Docker/Linux containers
+*.sh text eol=lf
+ 
+# Python source files
+*.py text diff=python
+ 
+# Text files
+*.md text
+*.txt text
+*.yml text
+*.yaml text
+*.json text
+*.cfg text
+ 
+# Binary files
+*.pcap binary
+*.png binary
+*.jpg binary
