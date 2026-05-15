@@ -55,8 +55,10 @@ def rudp_send_file(
                     except ValueError:
                         continue
                     if atyp == MsgType.ACK and aseq == seq:
+                        # ACK recebido para este seq
                         logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "client", "event": "ack_received", "seq": aseq}))
                         return
+                # não recebeu ACK dentro do timeout -> vai retransmitir (se houver tentativas restantes)
                 if attempt < max_retries - 1:
                     logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "client", "event": "retransmit", "seq": seq, "attempt": attempt + 1}))
                 else:
@@ -148,11 +150,19 @@ def rudp_receive_one_file(
         if typ == MsgType.FIN:
             ack = pack_frame(matricula, nome, seq, MsgType.ACK, b"")
             sock.sendto(ack, _addr)
+            logger = logging.getLogger("transfers")
             logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "recv", "seq": seq, "type": "FIN"}))
             logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "ack_sent", "seq": seq}))
             if out_file:
                 out_file.close()
-            logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "end", "bytes_written": bytes_written, "path": path_saved}))
+            logger.info(json.dumps({
+                "ts": time.time(),
+                "mode": "rudp",
+                "role": "server",
+                "event": "end",
+                "bytes_written": bytes_written,
+                "path": path_saved,
+            }))
             return bytes_written, path_saved
  
     raise RuntimeError("socket fechado inesperadamente")
