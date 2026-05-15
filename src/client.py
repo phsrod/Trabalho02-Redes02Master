@@ -7,7 +7,7 @@ import logging
 import json
 import time
  
-from .config import require_identity
+from .config import require_identity, RUDP_TIMEOUT_DEFAULT
 from .metrics_log import append_csv_row, build_row, log_json_line
 from .rudp_mode import rudp_send_file
 from .tcp_mode import tcp_send_file
@@ -23,7 +23,8 @@ def main() -> None:
     p.add_argument("--jsonl", default="", help="Anexa métricas a este JSONL")
     p.add_argument("--run-id", type=int, default=0)
     p.add_argument("--scenario", default="manual")
-    p.add_argument("--rudp-timeout", type=float, default=2.0)
+    p.add_argument("--rudp-timeout", type=float, default=RUDP_TIMEOUT_DEFAULT,
+                   help=f"Timeout em segundos para R-UDP (padrão: {RUDP_TIMEOUT_DEFAULT})")
     args = p.parse_args()
  
     matricula, nome = require_identity()
@@ -31,7 +32,7 @@ def main() -> None:
     if not os.path.isfile(path):
         raise SystemExit(f"Arquivo inexistente: {path}")
  
-    # initialize simple JSONL logger writing to transfers.log
+    # Inicializa logger JSONL compartilhado
     target_dir = os.environ.get("RESULTS_DIR") or ("/data" if os.path.isdir("/data") else "results")
     os.makedirs(target_dir, exist_ok=True)
     log_path = os.path.join(target_dir, "transfers.log")
