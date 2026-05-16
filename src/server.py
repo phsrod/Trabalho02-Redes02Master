@@ -12,16 +12,8 @@ from .rudp_mode import rudp_run_server
 from .tcp_mode import tcp_run_server
  
  
-def main() -> None:
-    p = argparse.ArgumentParser(description="Servidor de transferência (TCP ou R-UDP).")
-    p.add_argument("--mode", choices=("tcp", "rudp"), required=True)
-    p.add_argument("--host", default="0.0.0.0")
-    p.add_argument("--port", type=int, default=9000)
-    p.add_argument("--out", dest="out_dir", default="/tmp/received")
-    args = p.parse_args()
-    matricula, nome = require_identity()
- 
-    # initialize logger writing to transfers.log (shared file)
+def _setup_logger() -> logging.Logger:
+    """Configura e retorna o logger compartilhado 'transfers' com output para arquivo JSONL."""
     target_dir = os.environ.get("RESULTS_DIR") or ("/data" if os.path.isdir("/data") else "results")
     os.makedirs(target_dir, exist_ok=True)
     log_path = os.path.join(target_dir, "transfers.log")
@@ -31,7 +23,19 @@ def main() -> None:
         fh.setFormatter(logging.Formatter("%(message)s"))
         logger.setLevel(logging.INFO)
         logger.addHandler(fh)
+    return logger
  
+ 
+def main() -> None:
+    p = argparse.ArgumentParser(description="Servidor de transferência (TCP ou R-UDP).")
+    p.add_argument("--mode", choices=("tcp", "rudp"), required=True)
+    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--port", type=int, default=9000)
+    p.add_argument("--out", dest="out_dir", default="/tmp/received")
+    args = p.parse_args()
+    matricula, nome = require_identity()
+ 
+    logger = _setup_logger()
     logger.info(json.dumps({
         "ts": time.time(),
         "mode": args.mode,
