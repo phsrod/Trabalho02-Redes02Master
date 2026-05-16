@@ -1,24 +1,41 @@
-#!/usr/bin/env python3
-"""Generate statistics table and plots from client metrics CSV."""
+"""
+Análise comparativa (Pandas/Matplotlib) a partir do CSV gerado pelo cliente.
+Uso: python scripts/analyze_results.py results/metrics_app.csv
+"""
 from __future__ import annotations
  
 import argparse
 import os
 import sys
+from typing import Iterable
  
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+ 
  
 SCENARIO_ORDER = ("A", "B", "C")
 MODE_ORDER = ("tcp", "rudp")
+MODE_TITLES = {"tcp": "TCP", "rudp": "R-UDP"}
+ 
+# Cores para cada estatística nos gráficos de 4 painéis
+STAT_COLORS = {
+    "min": "#DD8452",
+    "mean": "#4C72B0",
+    "max": "#55A868",
+    "std": "#C44E52",
+}
+ 
+# Cores para comparação entre protocolos
+MODE_COLORS = {"tcp": "#4C72B0", "rudp": "#DD8452"}
+ 
+ANNOTATION_FONTSIZE = 8
  
  
-def _ordered_values(values, preferred_order):
+def _ordered_values(values: Iterable[str], preferred_order: tuple[str, ...]) -> list[str]:
     present = list(dict.fromkeys(str(v) for v in values))
-    ordered = [v for v in preferred_order if v in present]
-    remaining = sorted(v for v in present if v not in preferred_order)
+    ordered = [value for value in preferred_order if value in present]
+    remaining = sorted(value for value in present if value not in preferred_order)
     return ordered + remaining
  
  
@@ -26,8 +43,12 @@ def _prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     required = {"scenario", "mode", "duration_sec", "throughput_mbps"}
     missing = required.difference(df.columns)
     if missing:
-        print("CSV missing required columns: " + ", ".join(sorted(missing)), file=sys.stderr)
+        print(
+            "CSV sem as colunas obrigatórias: " + ", ".join(sorted(missing)),
+            file=sys.stderr,
+        )
         sys.exit(1)
+ 
     cleaned = df.copy()
     if "role" in cleaned.columns:
         client_rows = cleaned[cleaned["role"].astype(str).str.lower() == "client"].copy()
@@ -37,97 +58,215 @@ def _prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
  
  
 def _build_summary(df: pd.DataFrame) -> pd.DataFrame:
-    agg = {}
-    if "run_id" in df.columns:
-        agg["runs"] = ("run_id", "count")
-    agg["throughput_min"] = ("throughput_mbps", "min")
-    agg["throughput_mean"] = ("throughput_mbps", "mean")
-    agg["throughput_max"] = ("throughput_mbps", "max")
-    agg["throughput_std"] = ("throughput_mbps", "std")
-    agg["duration_min"] = ("duration_sec", "min")
-    agg["duration_mean"] = ("duration_sec", "mean")
-    agg["duration_max"] = ("duration_sec", "max")
-    agg["duration_std"] = ("duration_sec", "std")
- 
-    summary = df.groupby(["scenario", "mode"], as_index=False).agg(**agg).reset_index(drop=True)
+    summary = (
+        df.groupby(["scenario", "mode"], as_index=False)
+        .agg(
+            runs=("run_id", "count") if "run_id" in df.columns else ("throughput_mbps", "count"),
+            throughput_min=("throughput_mbps", "min"),
+            throughput_mean=("throughput_mbps", "mean"),
+            throughput_max=("throughput_mbps", "max"),
+            throughput_std=("throughput_mbps", "std"),
+            duration_min=("duration_sec", "min"),
+            duration_mean=("duration_sec", "mean"),
+            duration_max=("duration_sec", "max"),
+            duration_std=("duration_sec", "std"),
+        )
+        .reset_index(drop=True)
+    )
     summary["throughput_std"] = summary["throughput_std"].fillna(0.0)
     summary["duration_std"] = summary["duration_std"].fillna(0.0)
-    if "runs" in summary.columns:
-        summary["runs"] = summary["runs"].astype(int)
+    summary["runs"] = summary["runs"].astype(int)
     return summary
  
  
-def _plot_throughput_bars(df: pd.DataFrame, out_dir: str) -> None:
-    os.makedirs(out_dir, exist_ok=True)
-    summary = _build_summary(df)
+def _save_metric_csv(summary: pd.DataFrame, metric_prefix: str, out_path: str) -> None:
+    columns = [
+        "scenario", "mode", "runs",
+        f"{metric_prefix}_min", f"{metric_prefix}_mean",
+        f"{metric_prefix}_max", f"{metric_prefix}_std",
+    ]
+    summary.loc[:, columns].to_csv(out_path, index=False)
+ 
+ 
+def _annotate_points(axis: plt.Axes, x: np.ndarray, values: list[float], offset_y: int = 6) -> None:
+    for x_val, y_val in zip(x, values, strict=True):
+        axis.annotate(
+            f"{y_val:.3f}",
+            (x_val, y_val),
+            textcoords="offset points",
+            xytext=(0, offset_y),
+            ha="center",
+            fontsize=ANNOTATION_FONTSIZE,
+            color="#222222",
+        )
+ 
+ 
+def _plot_metric_lines_by_protocol(
+    summary: pd.DataFrame, metric_prefix: str, ylabel: str, title: str, out_path: str,
+) -> None:
     scenarios = _ordered_values(summary["scenario"].unique(), SCENARIO_ORDER)
-    modes = _ordered_values(summary["mode"].unique(), MODE_ORDER)
+    mode = str(summary["mode"].iloc[0]) if not summary.empty else ""
+    mode_title = MODE_TITLES.get(mode, mode.upper() if mode else "")
+    fig, axes = plt.subplots(2, 2, figsize=(11.5, 8.0), sharex=True)
+    axes = np.atleast_1d(axes)
+    stat_keys = [
+        ("min", "Mínimo"),
+        ("mean", "Média"),
+        ("max", "Máximo"),
+        ("std", "Desvio padrão"),
+    ]
+    x = np.arange(len(scenarios))
+    subset = summary.set_index("scenario")
+    for axis, (stat_suffix, stat_label) in zip(axes.flat, stat_keys, strict=True):
+        values = [
+            float(subset.loc[scenario, f"{metric_prefix}_{stat_suffix}"])
+            if scenario in subset.index else 0.0
+            for scenario in scenarios
+        ]
+        color = STAT_COLORS.get(stat_suffix, "#4C72B0")
+        axis.plot(x, values, marker="o", linewidth=2.0, color=color, label=stat_label)
+        _annotate_points(axis, x, values)
+        axis.set_title(stat_label)
+        axis.set_xticks(x)
+        axis.set_xticklabels(scenarios)
+        axis.grid(True, axis="both", alpha=0.3)
+        axis.set_axisbelow(True)
+        axis.legend(loc="best")
  
-    for mode in modes:
-        subset = summary[summary["mode"] == mode].copy()
-        if subset.empty:
-            continue
-        means = [subset.loc[subset["scenario"] == s, "throughput_mean"].values[0] if not subset.loc[subset["scenario"] == s].empty else 0 for s in scenarios]
-        stds = [subset.loc[subset["scenario"] == s, "throughput_std"].values[0] if not subset.loc[subset["scenario"] == s].empty else 0 for s in scenarios]
-        fig, ax = plt.subplots(figsize=(8, 5))
-        bars = ax.bar(scenarios, means, yerr=stds, capsize=6, color="#2196F3" if mode == "tcp" else "#FF9800")
-        for bar, val in zip(bars, means):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5, f"{val:.2f}", ha="center", va="bottom", fontsize=9)
-        ax.set_xlabel("Scenario")
-        ax.set_ylabel("Throughput (Mbps)")
-        ax.set_title(f"Throughput per Scenario - {mode.upper()}")
-        ax.grid(axis="y", alpha=0.3)
-        plt.tight_layout()
-        fname = os.path.join(out_dir, f"throughput_{mode}.png")
-        fig.savefig(fname, dpi=150)
-        plt.close(fig)
-        print(f"Saved: {fname}")
+    for axis in axes.flat:
+        axis.set_xlabel("Cenário")
+        axis.set_ylabel(ylabel)
+    fig.suptitle(f"{title} - {mode_title}" if mode_title else title)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.savefig(out_path, dpi=170)
  
-    # comparison plot
-    fig, ax = plt.subplots(figsize=(10, 6))
-    width = 0.35
-    x = range(len(scenarios))
-    for i, mode in enumerate(modes):
-        subset = summary[summary["mode"] == mode]
-        means = [subset.loc[subset["scenario"] == s, "throughput_mean"].values[0] if not subset.loc[subset["scenario"] == s].empty else 0 for s in scenarios]
-        stds = [subset.loc[subset["scenario"] == s, "throughput_std"].values[0] if not subset.loc[subset["scenario"] == s].empty else 0 for s in scenarios]
-        offset = (i - 0.5) * width
-        bars = ax.bar([p + offset for p in x], means, width, yerr=stds, capsize=4, label=mode.upper(), color=["#2196F3", "#FF9800"][i])
-    ax.set_xlabel("Scenario")
-    ax.set_ylabel("Throughput (Mbps)")
-    ax.set_title("TCP vs R-UDP Throughput Comparison")
-    ax.set_xticks(x)
-    ax.set_xticklabels(scenarios)
-    ax.legend()
-    ax.grid(axis="y", alpha=0.3)
-    plt.tight_layout()
-    fname = os.path.join(out_dir, "throughput_comparison.png")
-    fig.savefig(fname, dpi=150)
-    plt.close(fig)
-    print(f"Saved: {fname}")
+ 
+def _save_protocol_figures(summary: pd.DataFrame, args_out_dir: str) -> None:
+    tcp_dir = os.path.join(args_out_dir, "tcp")
+    rudp_dir = os.path.join(args_out_dir, "rudp")
+    os.makedirs(tcp_dir, exist_ok=True)
+    os.makedirs(rudp_dir, exist_ok=True)
+ 
+    for mode in _ordered_values(summary["mode"].unique(), MODE_ORDER):
+        mode_summary = summary[summary["mode"] == mode]
+        mode_dir = tcp_dir if mode == "tcp" else rudp_dir
+        _plot_metric_lines_by_protocol(
+            mode_summary, "throughput", "Vazão (Mbps)",
+            f"Vazão por cenário - {MODE_TITLES.get(mode, mode.upper())}",
+            os.path.join(mode_dir, f"throughput_{mode}_lines.png"),
+        )
+        _plot_metric_lines_by_protocol(
+            mode_summary, "duration", "Tempo (s)",
+            f"Tempo por cenário - {MODE_TITLES.get(mode, mode.upper())}",
+            os.path.join(mode_dir, f"duration_{mode}_lines.png"),
+        )
+ 
+ 
+def _save_individual_stat_figures(summary: pd.DataFrame, args_out_dir: str) -> None:
+    stats = [("min", "Mínimo"), ("mean", "Média"), ("max", "Máximo"), ("std", "Desvio padrão")]
+    scenarios = _ordered_values(summary["scenario"].unique(), SCENARIO_ORDER)
+    x = np.arange(len(scenarios))
+    tcp_dir = os.path.join(args_out_dir, "tcp")
+    rudp_dir = os.path.join(args_out_dir, "rudp")
+    os.makedirs(tcp_dir, exist_ok=True)
+    os.makedirs(rudp_dir, exist_ok=True)
+ 
+    for mode in _ordered_values(summary["mode"].unique(), MODE_ORDER):
+        subset = summary[summary["mode"] == mode].set_index("scenario")
+        mode_dir = tcp_dir if mode == "tcp" else rudp_dir
+        for metric_prefix, ylabel in (("throughput", "Vazão (Mbps)"), ("duration", "Tempo (s)")):
+            for stat_suffix, stat_label in stats:
+                values = [
+                    float(subset.loc[scenario, f"{metric_prefix}_{stat_suffix}"])
+                    if scenario in subset.index else 0.0
+                    for scenario in scenarios
+                ]
+                fig, ax = plt.subplots(figsize=(7, 4))
+                color = STAT_COLORS.get(stat_suffix, "#4C72B0")
+                ax.plot(x, values, marker="o", linewidth=2.0, color=color)
+                _annotate_points(ax, x, values)
+                ax.set_xticks(x)
+                ax.set_xticklabels(scenarios)
+                ax.set_xlabel("Cenário")
+                ax.set_ylabel(ylabel)
+                ax.set_title(f"{MODE_TITLES.get(mode, mode.upper())} — {metric_prefix.capitalize()} ({stat_label})")
+                ax.grid(True, alpha=0.3)
+                out_png = os.path.join(mode_dir, f"{metric_prefix}_{mode}_{stat_suffix}.png")
+                fig.tight_layout()
+                fig.savefig(out_png, dpi=150)
+                plt.close(fig)
+ 
+ 
+def _save_compare_stat_figures(summary: pd.DataFrame, args_out_dir: str) -> None:
+    stats = [("min", "Mínimo"), ("mean", "Média"), ("max", "Máximo"), ("std", "Desvio padrão")]
+    scenarios = _ordered_values(summary["scenario"].unique(), SCENARIO_ORDER)
+    x = np.arange(len(scenarios))
+    compare_dir = os.path.join(args_out_dir, "compare")
+    os.makedirs(compare_dir, exist_ok=True)
+ 
+    for metric_prefix, ylabel in (("throughput", "Vazão (Mbps)"), ("duration", "Tempo (s)")):
+        for stat_suffix, stat_label in stats:
+            fig, ax = plt.subplots(figsize=(8, 4.5))
+            for mode in _ordered_values(summary["mode"].unique(), MODE_ORDER):
+                subset = summary[summary["mode"] == mode].set_index("scenario")
+                values = [
+                    float(subset.loc[scenario, f"{metric_prefix}_{stat_suffix}"])
+                    if scenario in subset.index else 0.0
+                    for scenario in scenarios
+                ]
+                color = MODE_COLORS.get(mode, "#4C72B0")
+                ax.plot(x, values, marker="o", linewidth=2.0, color=color,
+                        label=MODE_TITLES.get(mode, mode.upper()))
+                # Ajuste fino de anotação para evitar sobreposição
+                if metric_prefix == "duration" and stat_suffix == "mean" and mode == "tcp":
+                    _annotate_points(ax, x, values, offset_y=-12)
+                elif metric_prefix == "throughput" and mode == "rudp":
+                    _annotate_points(ax, x, values, offset_y=-12)
+                else:
+                    _annotate_points(ax, x, values)
+            ax.set_xticks(x)
+            ax.set_xticklabels(scenarios)
+            ax.set_xlabel("Cenário")
+            ax.set_ylabel(ylabel)
+            ax.set_title(f"Comparação por cenário — {metric_prefix.capitalize()} ({stat_label})")
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            out_png = os.path.join(compare_dir, f"{metric_prefix}_{stat_suffix}_compare.png")
+            fig.tight_layout()
+            fig.savefig(out_png, dpi=150)
+            plt.close(fig)
  
  
 def main() -> None:
-    p = argparse.ArgumentParser(description="Generate statistics and plots from metrics CSV.")
-    p.add_argument("csv_path", help="CSV with columns: scenario, mode, duration_sec, throughput_mbps")
+    p = argparse.ArgumentParser(description="Gera estatísticas e gráficos comparativos por protocolo.")
+    p.add_argument("csv_path", help="CSV com colunas: scenario, mode, duration_sec, throughput_mbps, ...")
     p.add_argument("--out-dir", default="results/plots")
     args = p.parse_args()
  
     if not os.path.isfile(args.csv_path):
-        print(f"File not found: {args.csv_path}", file=sys.stderr)
+        print(f"Arquivo não encontrado: {args.csv_path}", file=sys.stderr)
         sys.exit(1)
  
     df = _prepare_dataframe(pd.read_csv(args.csv_path))
     os.makedirs(args.out_dir, exist_ok=True)
  
     summary = _build_summary(df)
-    summary.to_csv(os.path.join(args.out_dir, "stats_summary.csv"), index=False)
+    summary_out = os.path.join(args.out_dir, "stats_summary.csv")
+    summary.to_csv(summary_out, index=False)
+    _save_metric_csv(summary, "throughput", os.path.join(args.out_dir, "stats_throughput.csv"))
+    _save_metric_csv(summary, "duration", os.path.join(args.out_dir, "stats_duration.csv"))
  
-    print("Aggregated statistics per scenario and mode:\n")
+    print("Estatísticas agregadas por cenário e modo:\n")
     print(summary.to_string(index=False))
-    print(f"\nSummary saved to: {os.path.join(args.out_dir, 'stats_summary.csv')}")
  
-    _plot_throughput_bars(df, args.out_dir)
+    _save_protocol_figures(summary, args.out_dir)
+    _save_individual_stat_figures(summary, args.out_dir)
+    _save_compare_stat_figures(summary, args.out_dir)
+ 
+    print(f"\nResumo salvo em: {summary_out}")
+    for mode in _ordered_values(summary["mode"].unique(), MODE_ORDER):
+        print(f"Gráfico de vazão ({mode}): {os.path.join(args.out_dir, f'throughput_{mode}_lines.png')}")
+        print(f"Gráfico de tempo ({mode}): {os.path.join(args.out_dir, f'duration_{mode}_lines.png')}")
  
  
 if __name__ == "__main__":
