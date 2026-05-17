@@ -1,108 +1,159 @@
 #!/usr/bin/env python3
-"""Converte .pcap para CSV sumarizado (tshark necessário)."""
+"""
+Gera CSV resumo a partir dos PCAPs em results/pcaps/<mode>/<scenario>/capture_...pcap
+Produz: results/pcap_summary.csv
+ 
+Requisitos: `tshark` disponível no PATH.
+Uso:
+  python3 scripts/pcap_to_csv.py
+"""
 from __future__ import annotations
  
 import csv
-import glob
-import os
-import shutil
-import subprocess
-import sys
 import re
+import subprocess
+from pathlib import Path
+from typing import List, Tuple
  
-PCAP_DIR = "results/pcaps"
-OUT = "results/pcap_summary.csv"
- 
-TSHARK_FIELDS = [
-    "frame.time_epoch",
-    "frame.len",
-    "ip.src",
-    "ip.dst",
-    "udp.srcport",
-    "udp.dstport",
-    "tcp.srcport",
-    "tcp.dstport",
-]
+ROOT = Path("results/pcaps")
+OUT = Path("results/pcap_summary.csv")
  
  
-def run_tshark(pcap: str) -> list[dict[str, str]]:
-    if not shutil.which("tshark"):
-        print("tshark not found. Install it with: sudo apt install tshark", file=sys.stderr)
-        return []
-    cmd = ["tshark", "-r", pcap, "-T", "fields"]
-    for f in TSHARK_FIELDS:
-        cmd.extend(["-e", f])
-    cmd.extend(["--header", "y"])
+def run_tshark(pcap: Path, display_filter: str | None = None) -> List[Tuple[float, int]]:
+    """Executa tshark e retorna lista de (time_epoch, frame.len).
+ 
+    Se display_filter for None, usa filtro padrão para porta 9000 (ambas direções).
+    """
+    cmd = [
+        "tshark",
+        "-r", str(pcap),
+        "-T", "fields",
+        "-e", "frame.time_epoch",
+        "-e", "frame.len",
+        "-E", "separator=,",
+    ]
+    if display_filter:
+        cmd.extend(["-Y", display_filter])
+    else:
+        cmd.extend(["-Y", "tcp.port==9000 || udp.port==9000"])
+ 
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        # Pcap vazio ou sem pacotes filtráveis não é erro fatal
+        if "0 packets" in proc.stderr or "0 packets" in proc.stdout:
+            return []
+        raise RuntimeError(f"tshark falhou em {pcap}: {proc.stderr.strip()}")
+    
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    out: List[Tuple[float, int]] = []
+    for ln in lines:
+        parts = ln.split(",", 1)
+        if len(parts) < 2:
+            continue
+        try:
+            t = float(parts[0].strip())
+            b = int(parts[1].strip())
+            out.append((t, b))
+        except (ValueError, TypeError):
+            continue
+    return out
+ 
+ 
+def _parse_metadata(pcap: Path) -> dict:
+    """Extrai mode, scenario e run_id do caminho do pcap."""
+    meta = {"mode": "", "scenario": "", "run_id": 0}
     try:
-        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True)
-    except subprocess.CalledProcessError:
-        return []
-    lines = out.strip().splitlines()
-    if len(lines) < 2:
-        return []
-    headers = lines[0].split("\t")
-    rows = []
-    for line in lines[1:]:
-        vals = line.split("\t")
-        rows.append(dict(zip(headers, vals)))
-    return rows
+        parts = pcap.parts
+        idx = parts.index("pcaps")
+        meta["mode"] = parts[idx + 1] if idx + 1 < len(parts) else ""
+        meta["scenario"] = parts[idx + 2] if idx + 2 < len(parts) else ""
+    except (ValueError, IndexError):
+        pass
+    # Extrai run_id do nome do arquivo: capture_<scen>_<mode>_<run>.pcap
+    match = re.search(r"_(\d+)\.pcap$", pcap.name)
+    if match:
+        meta["run_id"] = int(match.group(1))
+    return meta
  
  
-def _parse_pcap_name(name: str) -> dict:
-    m = re.match(r"(\w+)_(\w+)_run(\d+)", name)
-    if m:
-        return {"scenario": m.group(1), "mode": m.group(2), "run_id": int(m.group(3))}
-    return {}
+def analyze(pcap: Path):
+    try:
+        records_total = run_tshark(pcap, None)
+        records_a2b = run_tshark(pcap, "tcp.dstport==9000 || udp.dstport==9000")
+    except Exception as e:
+        print(f"Pulando {pcap}: {e}")
+        return None
+ 
+    meta = _parse_metadata(pcap)
+ 
+    if not records_total and not records_a2b:
+        return {
+            "pcap_path": str(pcap),
+            **meta,
+            "pkts_on_wire": 0,
+            "bytes_on_wire": 0,
+            "start_ts": "",
+            "end_ts": "",
+            "duration_s": 0.0,
+            "throughput_mbps_on_wire": 0.0,
+        }
+ 
+    # Usa registros client->server (A->B) para métricas
+    records = records_a2b if records_a2b else records_total
+    times = [t for t, _ in records]
+    bytes_sum = sum(b for _, b in records)
+    start_ts = min(times) if times else None
+    end_ts = max(times) if times else None
+    duration_s = end_ts - start_ts if (start_ts is not None and end_ts is not None and end_ts > start_ts) else 0.0
+    throughput = (bytes_sum * 8.0) / (duration_s * 1_000_000.0) if duration_s > 0 else 0.0
+ 
+    return {
+        "pcap_path": str(pcap),
+        **meta,
+        "pkts_on_wire": len(records),
+        "bytes_on_wire": bytes_sum,
+        "start_ts": f"{start_ts:.6f}" if start_ts is not None else "",
+        "end_ts": f"{end_ts:.6f}" if end_ts is not None else "",
+        "duration_s": round(duration_s, 6),
+        "throughput_mbps_on_wire": round(throughput, 6),
+    }
  
  
 def main() -> None:
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    pattern = os.path.join(PCAP_DIR, "*.pcap")
-    all_rows = []
-    for pcap in sorted(glob.glob(pattern)):
-        base = os.path.splitext(os.path.basename(pcap))[0]
-        meta = _parse_pcap_name(base)
-        frames = run_tshark(pcap)
-        if not frames:
-            continue
-        first = frames[0]
-        last = frames[-1]
-        total_bytes = sum(int(f.get("frame.len", 0) or 0) for f in frames)
-        start_ts = float(first.get("frame.time_epoch", 0))
-        end_ts = float(last.get("frame.time_epoch", 0))
-        dur = end_ts - start_ts
-        mbps = (total_bytes * 8.0) / (dur * 1_000_000.0) if dur > 0 else 0.0
-        row = {
-            "run_id": meta.get("run_id", ""),
-            "scenario": meta.get("scenario", ""),
-            "mode": meta.get("mode", ""),
-            "pcap_path": pcap,
-            "pkts_on_wire": len(frames),
-            "bytes_on_wire": total_bytes,
-            "start_ts": start_ts,
-            "end_ts": end_ts,
-            "duration_s": round(dur, 6),
-            "throughput_mbps_on_wire": round(mbps, 6),
-        }
-        all_rows.append(row)
-        print(f"  {base}: {len(frames)} pkts, {mbps:.2f} mbps")
- 
-    if not all_rows:
-        print("No pcap files found.")
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    rows = []
+    if not ROOT.exists():
+        print(f"Nenhum pcap: {ROOT} não existe")
         return
  
-    fields = [
+    pcaps = sorted(ROOT.rglob("*.pcap"))
+    if not pcaps:
+        print(f"Nenhum arquivo .pcap encontrado em {ROOT}")
+        return
+ 
+    for p in pcaps:
+        res = analyze(p)
+        if res:
+            rows.append(res)
+ 
+    if not rows:
+        print("Nenhum pcap processado.")
+        return
+ 
+    rows.sort(key=lambda row: int(row.get("run_id", 0) or 0))
+ 
+    fieldnames = [
         "run_id", "scenario", "mode", "pcap_path",
-        "pkts_on_wire", "bytes_on_wire", "start_ts", "end_ts",
-        "duration_s", "throughput_mbps_on_wire",
+        "pkts_on_wire", "bytes_on_wire",
+        "start_ts", "end_ts", "duration_s", "throughput_mbps_on_wire",
     ]
     with open(OUT, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
+        w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
-        for r in all_rows:
-            w.writerow({k: r.get(k, "") for k in fields})
+        for r in rows:
+            w.writerow({k: r.get(k, "") for k in fieldnames})
  
-    print(f"Wrote {OUT} ({len(all_rows)} entries)")
+    print(f"Escrito {OUT} ({len(rows)} entradas)")
  
  
 if __name__ == "__main__":
