@@ -1,6 +1,6 @@
 """UDP confiável com Stop-and-Wait: ACK, timeout, retransmissão e CRC32 no payload."""
 from __future__ import annotations
- 
+
 import json
 import os
 import select
@@ -8,33 +8,35 @@ import socket
 import time
 import logging
 from typing import Callable
- 
-from .config import RUDP_CHUNK_SIZE, RUDP_MAX_RETRIES, RUDP_PAYLOAD_MAX, RUDP_TIMEOUT_DEFAULT
+
 from .framing import MsgType, pack_frame, parse_frame_verify
- 
- 
+
+# UDP: evitar fragmentação IP (MTU ~1500); margem para cabeçalhos IP/UDP e linha de auth.
+UDP_PAYLOAD_MAX = 1200
+CHUNK_SIZE = UDP_PAYLOAD_MAX - 200
+
+
 def rudp_send_file(
     host: str,
     port: int,
     filepath: str,
     matricula: str,
     nome: str,
-    timeout_sec: float = RUDP_TIMEOUT_DEFAULT,
-    max_retries: int = RUDP_MAX_RETRIES,
+    timeout_sec: float = 2.0,
+    max_retries: int = 1000,
     progress: Callable[[str], None] | None = None,
 ) -> tuple[float, int]:
-    """Envia arquivo sobre UDP com Stop-and-Wait. Retorna (segundos, bytes enviados)."""
     size = os.path.getsize(filepath)
     basename = os.path.basename(filepath)
     t0 = time.monotonic()
     bytes_sent = 0
- 
+
     logger = logging.getLogger("transfers")
- 
+
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.setblocking(False)
- 
-        def _send_sw(seq: int, typ: MsgType, payload: bytes) -> None:
+
+        def send_sw(seq: int, typ: MsgType, payload: bytes) -> None:
             nonlocal bytes_sent
             pkt = pack_frame(matricula, nome, seq, typ, payload)
             if len(pkt) > 65507:
@@ -44,56 +46,49 @@ def rudp_send_file(
                 bytes_sent += len(pkt)
                 deadline = time.monotonic() + timeout_sec
                 while time.monotonic() < deadline:
-                    rlist, _, _ = select.select([sock], [], [], max(0.0, deadline - time.monotonic()))
-                    if not rlist:
+                    r, _, _ = select.select([sock], [], [], max(0.0, deadline - time.monotonic()))
+                    if not r:
                         continue
                     data, _addr = sock.recvfrom(65535)
                     try:
-                        aseq, atyp, _apay = parse_frame_verify(data, matricula, nome)
+                        aseq, atyp, apay = parse_frame_verify(data, matricula, nome)
                     except ValueError:
                         continue
                     if atyp == MsgType.ACK and aseq == seq:
-                        logger.info(json.dumps({
-                            "ts": time.time(), "mode": "rudp", "role": "client",
-                            "event": "ack_received", "seq": aseq,
-                        }))
+                        # ACK recebido para este seq
+                        logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "client", "event": "ack_received", "seq": aseq}))
                         return
+                # não recebeu ACK dentro do timeout -> vai retransmitir (se houver tentativas restantes)
                 if attempt < max_retries - 1:
-                    logger.info(json.dumps({
-                        "ts": time.time(), "mode": "rudp", "role": "client",
-                        "event": "retransmit", "seq": seq, "attempt": attempt + 1,
-                    }))
+                    logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "client", "event": "retransmit", "seq": seq, "attempt": attempt + 1}))
                 else:
-                    logger.error(json.dumps({
-                        "ts": time.time(), "mode": "rudp", "role": "client",
-                        "event": "timeout", "seq": seq, "attempts": max_retries,
-                    }))
+                    logger.error(json.dumps({"ts": time.time(), "mode": "rudp", "role": "client", "event": "timeout", "seq": seq, "attempts": max_retries}))
                 if progress and attempt % 10 == 0:
                     progress(f"retransmitindo seq={seq} tentativa={attempt+1}")
-            raise TimeoutError(f"falha após {max_retries} retransmissões: seq={seq}")
- 
+            raise TimeoutError(f"falha após retransmissões: seq={seq}")
+
         meta = json.dumps({"name": basename, "size": size}, separators=(",", ":")).encode()
-        _send_sw(0, MsgType.META, meta)
+        send_sw(0, MsgType.META, meta)
         if progress:
             progress("meta ok")
- 
+
         seq = 1
         with open(filepath, "rb") as f:
             while True:
-                block = f.read(RUDP_CHUNK_SIZE)
+                block = f.read(CHUNK_SIZE)
                 if not block:
                     break
-                _send_sw(seq, MsgType.DATA, block)
+                send_sw(seq, MsgType.DATA, block)
                 seq += 1
                 if progress:
                     progress(f"enviado até seq={seq-1}")
- 
-        _send_sw(seq, MsgType.FIN, b"")
- 
+
+        send_sw(seq, MsgType.FIN, b"")
+
     elapsed = time.monotonic() - t0
     return elapsed, bytes_sent
- 
- 
+
+
 def rudp_receive_one_file(
     sock: socket.socket,
     matricula: str,
@@ -101,21 +96,20 @@ def rudp_receive_one_file(
     out_dir: str,
     progress: Callable[[str], None] | None = None,
 ) -> tuple[int, str]:
-    """Recebe um arquivo via UDP confiável. Retorna (bytes escritos, caminho salvo)."""
     out_file = None
     path_saved = ""
     bytes_written = 0
     next_data_seq = 1
     meta_ok = False
- 
+
     while True:
-        data, client_addr = sock.recvfrom(65535)
+        data, _addr = sock.recvfrom(65535)
         try:
             seq, typ, payload = parse_frame_verify(data, matricula, nome)
         except ValueError:
             continue
         logger = logging.getLogger("transfers")
- 
+
         if typ == MsgType.META:
             meta = json.loads(payload.decode("utf-8"))
             safe = os.path.basename(meta["name"])
@@ -126,51 +120,48 @@ def rudp_receive_one_file(
             meta_ok = True
             next_data_seq = 1
             ack = pack_frame(matricula, nome, seq, MsgType.ACK, b"")
-            sock.sendto(ack, client_addr)
+            sock.sendto(ack, _addr)
             logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "recv", "seq": seq, "type": "META"}))
             logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "ack_sent", "seq": seq}))
             continue
- 
+
         if typ == MsgType.DATA:
             if not meta_ok or out_file is None:
                 continue
-            if seq < next_data_seq:
+            if seq == next_data_seq - 1:
                 ack = pack_frame(matricula, nome, seq, MsgType.ACK, b"")
-                sock.sendto(ack, client_addr)
+                sock.sendto(ack, _addr)
                 logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "duplicate", "seq": seq}))
                 logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "ack_sent", "seq": seq}))
                 continue
             if seq != next_data_seq:
                 continue
+            logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "recv", "seq": seq, "type": "DATA", "payload_len": len(payload)}))
             out_file.write(payload)
             bytes_written += len(payload)
             next_data_seq += 1
             ack = pack_frame(matricula, nome, seq, MsgType.ACK, b"")
-            sock.sendto(ack, client_addr)
-            logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "recv", "seq": seq, "type": "DATA", "payload_len": len(payload)}))
+            sock.sendto(ack, _addr)
             logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "ack_sent", "seq": seq}))
             if progress:
                 progress(f"recebido {bytes_written} B")
             continue
- 
+
         if typ == MsgType.FIN:
             ack = pack_frame(matricula, nome, seq, MsgType.ACK, b"")
-            sock.sendto(ack, client_addr)
+            sock.sendto(ack, _addr)
+            logger = logging.getLogger("transfers")
             logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "recv", "seq": seq, "type": "FIN"}))
             logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "ack_sent", "seq": seq}))
             if out_file:
                 out_file.close()
-            logger.info(json.dumps({
-                "ts": time.time(), "mode": "rudp", "role": "server",
-                "event": "end", "bytes_written": bytes_written, "path": path_saved,
-            }))
+            logger.info(json.dumps({"ts": time.time(), "mode": "rudp", "role": "server", "event": "end", "bytes_written": bytes_written, "path": path_saved}))
             return bytes_written, path_saved
- 
+
     raise RuntimeError("socket fechado inesperadamente")
- 
- 
+
+
 def rudp_run_server(host: str, port: int, out_dir: str, matricula: str, nome: str) -> None:
-    """Loop principal do servidor R-UDP: aguarda datagramas e recebe arquivos."""
     os.makedirs(out_dir, exist_ok=True)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.bind((host, port))

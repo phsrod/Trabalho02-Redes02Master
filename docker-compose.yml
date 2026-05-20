@@ -1,25 +1,40 @@
-version: "3.8"
- 
 services:
   server:
     build: .
-    container_name: rudp-server
-    command: python3 -m src.server --mode tcp --port 9000 --out /data/inbox
-    ports:
-      - "9000:9000"
+    command:
+      - python3
+      - -m
+      - src.server
+      - --mode
+      - ${TRANSFER_MODE:-tcp}
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "9000"
+      - --out
+      - /data/inbox
+    environment:
+      MATRICULA: ${MATRICULA}
+      NOME_ALUNO: ${NOME_ALUNO}
     volumes:
       - ./results:/data
- 
+    ports:
+      - "9000:9000/tcp"
+      - "9000:9000/udp"
+
   client:
     build: .
-    container_name: rudp-client
-    command: sleep infinity
     depends_on:
       - server
-    volumes:
-      - ./results:/data
     cap_add:
       - NET_ADMIN
     environment:
-      - MATRICULA=${MATRICULA}
-      - NOME_ALUNO=${NOME_ALUNO}
+      MATRICULA: ${MATRICULA}
+      NOME_ALUNO: ${NOME_ALUNO}
+      SCENARIO: ${SCENARIO:-A}
+      TRANSFER_MODE: ${TRANSFER_MODE:-tcp}
+      RUN_ID: ${RUN_ID:-0}
+      HOST_SERVER: server
+    volumes:
+      - ./results:/data
+    command: ["/bin/bash", "/app/scripts/docker_client_run.sh"]

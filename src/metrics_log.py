@@ -1,19 +1,19 @@
 """Registro de métricas para cruzamento com capturas (Wireshark/tcpdump)."""
 from __future__ import annotations
- 
+
 import csv
 import json
 import os
 import time
 from typing import Any
- 
- 
+
+
 def throughput_mbps(num_bytes: int, seconds: float) -> float:
     if seconds <= 0:
         return 0.0
     return (num_bytes * 8.0) / (seconds * 1_000_000.0)
- 
- 
+
+
 CSV_FIELDS = [
     "ts_iso",
     "run_id",
@@ -24,8 +24,8 @@ CSV_FIELDS = [
     "bytes_app",
     "throughput_mbps",
 ]
- 
- 
+
+
 def append_csv_row(path: str, row: dict[str, Any]) -> None:
     d = os.path.dirname(os.path.abspath(path))
     if d:
@@ -36,16 +36,16 @@ def append_csv_row(path: str, row: dict[str, Any]) -> None:
         if not file_exists:
             w.writeheader()
         w.writerow(row)
- 
- 
+
+
 def log_json_line(path: str, obj: dict[str, Any]) -> None:
     d = os.path.dirname(os.path.abspath(path))
     if d:
         os.makedirs(d, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")
- 
- 
+
+
 def build_row(
     *,
     run_id: int,
