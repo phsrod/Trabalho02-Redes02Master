@@ -2,12 +2,12 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)
 
-> **Link Vídeo Youtube:** 
-> **Link Repositório Github:**
-> **Disciplina:** Redes de Computadores II — UFPI  
-> **Aluno:** Pedro Henrique Silva Rodrigues
-> **Matrícula:** 20249011446 
-> **Implementação:** Cliente/Servidor para transferência de arquivos em **TCP** e **UDP Confiável (R-UDP)**  
+> **Link Vídeo Youtube:** <br>
+> **Link Repositório Github:** <br>
+> **Disciplina:** Redes de Computadores II — UFPI  <br>
+> **Aluno:** Pedro Henrique Silva Rodrigues <br>
+> **Matrícula:** 20249011446 <br>
+> **Implementação:** Cliente/Servidor para transferência de arquivos em **TCP** e **UDP Confiável (R-UDP)**  <br>
 > **Diferencial:** Cabeçalho de autenticação personalizado (`X-Custom-Auth`), simulação de rede com `tc`, benchmark automatizado e análise estatística com Pandas/Matplotlib
 
 ---
