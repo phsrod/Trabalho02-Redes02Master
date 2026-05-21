@@ -3,7 +3,8 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)
 
 > **Link Vídeo Youtube:** <br>
-> **Link Repositório Github:** <br>
+> **Link Repositório Github:** [Repositório](https://github.com/phsrod/Trabalho01-Redes02Master) <br>
+> **Link Relatório:** [Relatório](https://www.overleaf.com/read/cdzcrfspmbvy#411310) <br>
 > **Disciplina:** Redes de Computadores II — UFPI  <br>
 > **Aluno:** Pedro Henrique Silva Rodrigues <br>
 > **Matrícula:** 20249011446 <br>
@@ -123,40 +124,45 @@ CLIENTE (sender)                          SERVIDOR (receiver)
 ```
 raiz/
 │
-├── src/                          # Código-fonte principal
-│   ├── __init__.py               # Torna src/ um pacote Python
-│   ├── server.py                 #  Servidor (ponto de entrada)
-│   ├── client.py                 #  Cliente (ponto de entrada)
-│   ├── tcp_mode.py               #  Lógica de transferência TCP
-│   ├── rudp_mode.py              #  Lógica de transferência R-UDP (Stop-and-Wait)
-│   ├── framing.py                #  Enquadramento de aplicação (empacota/desempacota)
-│   ├── auth_header.py            #  Geração/verificação do X-Custom-Auth
-│   ├── config.py                 #  Carrega MATRICULA e NOME_ALUNO (.env / variáveis)
-│   └── metrics_log.py            #  Geração de CSV/JSONL com métricas
+├── src/                                        # Código-fonte principal
+│   ├── __init__.py                             # Torna src/ um pacote Python
+│   ├── server.py                               #  Servidor (ponto de entrada)
+│   ├── client.py                               #  Cliente (ponto de entrada)
+│   ├── tcp_mode.py                             #  Lógica de transferência TCP
+│   ├── rudp_mode.py                            #  Lógica de transferência R-UDP (Stop-and-Wait)
+│   ├── framing.py                              #  Enquadramento de aplicação (empacota/desempacota)
+│   ├── auth_header.py                          #  Geração/verificação do X-Custom-Auth
+│   ├── config.py                               #  Carrega MATRICULA e NOME_ALUNO (.env / variáveis)
+│   └── metrics_log.py                          #  Geração de CSV/JSONL com métricas
 │
-├── scripts/                      # Scripts auxiliares
-│   ├── docker_client_run.sh      #  Aplica tc e executa cliente no container
-│   ├── benchmark_loop.sh         #  Loop automatizado de benchmarks
-│   ├── analyze_results.py        #  Estatísticas e gráficos (Pandas/Matplotlib)
-│   └── pcap_to_csv.py            #  Converte .pcap → CSV (tshark)
+├── docs/
+│   ├── Primeira Avaliacao Redes 2 2026-1.pdf   # Documento com especificações do trabalho
+│   └── Relatório___1º_Trabalho__RC2_.pdf       # Relatório template SBC
 │
-├── results/                      # Resultados gerados (criado ao rodar)
-│   ├── metrics_app.csv           # Métricas de todas as execuções
-│   ├── inbox/                    # Arquivos recebidos pelo servidor
-│   ├── pcaps/                    # Capturas .pcap (tcpdump)
-│   └── plots/                    # Gráficos e CSVs de estatísticas
-│       ├── stats_summary.csv     # Tabela completa (min/média/max/std)
-│       ├── tcp/                  # Gráficos do TCP
-│       ├── rudp/                 # Gráficos do R-UDP
-│       └── compare/              # Gráficos comparativos TCP vs R-UDP
 │
-├── Dockerfile                    #  Imagem Ubuntu + Python + iproute2
-├── docker-compose.yml            #  Orquestração servidor + cliente
-├── requirements.txt              # Dependências Python
-├── .env                          #  Suas credenciais (não versionado)
-├── env.example                   #  Modelo para o .env
-├── .gitignore                    # Arquivos ignorados pelo Git
-└── README.md                     #  Este arquivo
+├── scripts/                                    #  Scripts auxiliares
+│   ├── docker_client_run.sh                    #  Aplica tc e executa cliente no container
+│   ├── benchmark_loop.sh                       #  Loop automatizado de benchmarks
+│   ├── analyze_results.py                      #  Estatísticas e gráficos (Pandas/Matplotlib)
+│   └── pcap_to_csv.py                          #  Converte .pcap → CSV (tshark)
+│
+├── results/                                    # Resultados gerados (criado ao rodar)
+│   ├── metrics_app.csv                         # Métricas de todas as execuções
+│   ├── inbox/                                  # Arquivos recebidos pelo servidor
+│   ├── pcaps/                                  # Capturas .pcap (tcpdump)
+│   └── plots/                                  # Gráficos e CSVs de estatísticas
+│       ├── stats_summary.csv                   # Tabela completa (min/média/max/std)
+│       ├── tcp/                                # Gráficos do TCP
+│       ├── rudp/                               # Gráficos do R-UDP
+│       └── compare/                            # Gráficos comparativos TCP vs R-UDP
+│
+├── Dockerfile                                  #  Imagem Ubuntu + Python + iproute2
+├── docker-compose.yml                          #  Orquestração servidor + cliente
+├── requirements.txt                            # Dependências Python
+├── .env                                        #  Suas credenciais (não versionado)
+├── env.example                                 #  Modelo para o .env
+├── .gitignore                                  # Arquivos ignorados pelo Git
+└── README.md                                   #  Este arquivo
 ```
 
 ### Descrição Detalhada de Cada Arquivo
@@ -195,7 +201,7 @@ Toda mensagem trocada entre cliente e servidor **deve** conter uma linha de text
 X-Custom-Auth: a8f5f167f44f4964e6c998d13e2b7c7c8e2b...\r\n
 ```
 
-**Por quê?** O valor é fixo por aluno e aparece **em texto claro** nos pacotes, permitindo identificar o tráfego no Wireshark com um filtro simples:
+O valor aparece **em texto claro** nos pacotes, permitindo identificar o tráfego no Wireshark com um filtro simples:
 
 ```
 tcp contains "X-Custom-Auth"
@@ -328,7 +334,7 @@ Cada payload tem seu CRC32 anexado no cabeçalho binário:
 | **Git** (opcional) | — | Clonar o repositório |
 | **Wireshark / tshark** (opcional) | — | Validação cruzada com capturas |
 
-> 💡 **Usuários Windows:** O caminho mais simples é usar o **WSL2** com Ubuntu ou o **Docker Desktop** com terminal bash integrado. Os comandos abaixo funcionam em Linux, macOS e WSL.
+>  **Usuários Windows:** O caminho mais simples é usar o **WSL2** com Ubuntu ou o **Docker Desktop** com terminal bash integrado. Os comandos abaixo funcionam em Linux, macOS e WSL.
 
 ---
 
@@ -482,7 +488,7 @@ results/plots/
 | C | tcp | 15 | 280.3 | 301.2 | 325.7 | 14.1 |
 | C | rudp | 15 | 0.8 | 1.2 | 1.9 | 0.3 |
 
-> 💡 Os valores acima são ilustrativos. Os resultados reais dependem do hardware, da configuração de rede e do cenário simulado.
+>  Os valores acima são ilustrativos. Os resultados reais dependem do hardware, da configuração de rede e do cenário simulado.
 
 ### 10.2 Validação Cruzada com Wireshark/tcpdump
 
