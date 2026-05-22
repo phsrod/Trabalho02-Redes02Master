@@ -86,13 +86,13 @@ Além da implementação, o projeto permite:
                                │
                                ▼
                     ┌──────────────────────┐
-                    │   results/ (volume)   │
-                    │  ┌──────────────────┐ │
-                    │  │ metrics_app.csv   │ │  ← Métricas da aplicação
-                    │  │ pcaps/           │ │  ← Capturas .pcap
-                    │  │ inbox/           │ │  ← Arquivos recebidos
-                    │  │ plots/           │ │  ← Gráficos gerados
-                    │  └──────────────────┘ │
+                    │   results/ (volume)  │
+                    │  ┌──────────────────┐│
+                    │  │ metrics_app.csv  ││  ← Métricas da aplicação
+                    │  │ pcaps/           ││  ← Capturas .pcap
+                    │  │ inbox/           ││  ← Arquivos recebidos
+                    │  │ plots/           ││  ← Gráficos gerados
+                    │  └──────────────────┘│
                     └──────────────────────┘
 ```
 
@@ -136,6 +136,7 @@ raiz/
 │   └── metrics_log.py                          #  Geração de CSV/JSONL com métricas
 │
 ├── docs/
+│   ├── Capturas de Tela (X-CUSTOM-AUTH)/       # Capturas de tela que provam o X-CUSTOM-AUTH
 │   ├── Primeira Avaliacao Redes 2 2026-1.pdf   # Documento com especificações do trabalho
 │   └── Relatório___1º_Trabalho__RC2_.pdf       # Relatório template SBC
 │
@@ -159,7 +160,6 @@ raiz/
 ├── Dockerfile                                  #  Imagem Ubuntu + Python + iproute2
 ├── docker-compose.yml                          #  Orquestração servidor + cliente
 ├── requirements.txt                            # Dependências Python
-├── .env                                        #  Suas credenciais (não versionado)
 ├── env.example                                 #  Modelo para o .env
 ├── .gitignore                                  # Arquivos ignorados pelo Git
 └── README.md                                   #  Este arquivo
