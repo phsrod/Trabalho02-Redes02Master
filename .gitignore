@@ -2,5 +2,8 @@
 __pycache__/
 *.pyc
 .venv/
-results/
-docs/
+*.bin
+*.log
+inbox/
+results/plots/rudp/
+results/plots/tcp/

@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)
 
-> **Link Vídeo Youtube:** <br>
+> **Link Vídeo Youtube:** [Vídeo](https://youtu.be/ezxVtHxGSpw) <br>
 > **Link Repositório Github:** [Repositório](https://github.com/phsrod/Trabalho01-Redes02Master) <br>
 > **Link Relatório:** [Relatório](https://www.overleaf.com/read/cdzcrfspmbvy#411310) <br>
 > **Disciplina:** Redes de Computadores II — UFPI  <br>
