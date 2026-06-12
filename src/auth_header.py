@@ -1,4 +1,4 @@
-"""Campo X-Custom-Auth: SHA-256(Matrícula + Nome) em hexadecimal (visível no Wireshark)."""
+"""Campo X-Custom-Auth: SHA-256(Matrícula + Nome) em hexadecimal (visível nos pacotes do Wireshark)."""
 import hashlib
 
 AUTH_PREFIX = b"X-Custom-Auth: "
