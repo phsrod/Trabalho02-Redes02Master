@@ -1,4 +1,4 @@
-"""Credenciais de identificação (Matrícula + Nome) para o hash de autenticação."""
+"""Credenciais de identificação (Matrícula + Nome) para o hash de autenticação no cabeçalho HTTP."""
 import os
 from pathlib import Path
 
