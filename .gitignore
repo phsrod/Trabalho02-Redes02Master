@@ -5,5 +5,5 @@ __pycache__/
 *.bin
 *.log
 inbox/
-results/plots/rudp/
-results/plots/tcp/
+results/
+docs/
