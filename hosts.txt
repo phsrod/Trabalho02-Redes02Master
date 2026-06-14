@@ -1,0 +1,2 @@
+# Zona DNS local — mapeamento tipo A (IPv4)
+www.web.local 172.28.0.10
