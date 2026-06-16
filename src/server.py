@@ -9,7 +9,7 @@ import time
 
 from .config import require_identity
 from .rudp_mode import rudp_run_server
-from .tcp_mode import tcp_run_server
+from .http_tcp import tcp_run_server
 
 
 def main() -> None:
