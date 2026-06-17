@@ -9,7 +9,7 @@ import time
 
 from .config import require_identity
 from .metrics_log import append_csv_row, build_row, log_json_line
-from .rudp_mode import rudp_send_file
+from .http_rudp import rudp_send_file
 from .http_tcp import tcp_send_file
 
 
