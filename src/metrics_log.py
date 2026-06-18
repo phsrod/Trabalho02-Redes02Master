@@ -23,6 +23,13 @@ CSV_FIELDS = [
     "duration_sec",
     "bytes_app",
     "throughput_mbps",
+    "dns_duration_sec",
+    "http_duration_sec",
+    "dns_attempts",
+    "file_size",
+    "domain",
+    "success",
+    "error_reason",
 ]
 
 
@@ -54,6 +61,13 @@ def build_row(
     duration_sec: float,
     bytes_file: int,
     role: str,
+    dns_duration_sec: float = 0.0,
+    http_duration_sec: float = 0.0,
+    dns_attempts: int = 0,
+    file_size: str = "",
+    domain: str = "",
+    success: int = 1,
+    error_reason: str = "",
 ) -> dict[str, Any]:
     return {
         "ts_iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
@@ -64,4 +78,11 @@ def build_row(
         "duration_sec": round(duration_sec, 6),
         "bytes_app": bytes_file,
         "throughput_mbps": round(throughput_mbps(bytes_file, duration_sec), 6),
+        "dns_duration_sec": round(dns_duration_sec, 6),
+        "http_duration_sec": round(http_duration_sec, 6),
+        "dns_attempts": dns_attempts,
+        "file_size": file_size,
+        "domain": domain,
+        "success": success,
+        "error_reason": error_reason,
     }
