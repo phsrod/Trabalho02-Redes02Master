@@ -11,7 +11,10 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 
 COPY src ./src
 COPY scripts ./scripts
+COPY hosts.txt ./hosts.txt
+COPY www ./www
 # Windows pode salvar .sh com CRLF; no bash isso quebra `set -o pipefail` (\r no fim da linha).
-RUN sed -i 's/\r$//' /app/scripts/*.sh && chmod +x /app/scripts/*.sh
+RUN sed -i 's/\r$//' /app/scripts/*.sh && chmod +x /app/scripts/*.sh \
+    && bash /app/scripts/generate_www_files.sh
 
 ENV PYTHONPATH=/app
