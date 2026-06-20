@@ -1,31 +1,59 @@
 services:
-  server:
+  dns:
     build: .
     command:
       - python3
       - -m
-      - src.server
+      - src.dns_server
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "53"
+      - --zone
+      - /app/hosts.txt
+    volumes:
+      - ./hosts.txt:/app/hosts.txt:ro
+      - ./results:/data
+    networks:
+      app_net:
+        ipv4_address: 172.28.0.2
+
+  web:
+    build: .
+    command:
+      - python3
+      - -m
+      - src.web_server
       - --mode
       - ${TRANSFER_MODE:-tcp}
       - --host
       - "0.0.0.0"
       - --port
-      - "9000"
-      - --out
-      - /data/inbox
+      - "8080"
+      - --www
+      - /app/www
     environment:
       MATRICULA: ${MATRICULA}
       NOME_ALUNO: ${NOME_ALUNO}
+    cap_add:
+      - NET_ADMIN
     volumes:
+      - ./www:/app/www:ro
       - ./results:/data
     ports:
-      - "9000:9000/tcp"
-      - "9000:9000/udp"
+      - "8080:8080/tcp"
+      - "8080:8080/udp"
+    networks:
+      app_net:
+        ipv4_address: 172.28.0.10
+    depends_on:
+      - dns
 
   client:
     build: .
     depends_on:
-      - server
+      - dns
+      - web
     cap_add:
       - NET_ADMIN
     environment:
@@ -34,7 +62,19 @@ services:
       SCENARIO: ${SCENARIO:-A}
       TRANSFER_MODE: ${TRANSFER_MODE:-tcp}
       RUN_ID: ${RUN_ID:-0}
-      HOST_SERVER: server
+      FILE_SIZE: ${FILE_SIZE:-1m}
+      DNS_HOST: dns
+      WEB_DOMAIN: www.web.local
     volumes:
       - ./results:/data
+    networks:
+      app_net:
+        ipv4_address: 172.28.0.20
     command: ["/bin/bash", "/app/scripts/docker_client_run.sh"]
+
+networks:
+  app_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
