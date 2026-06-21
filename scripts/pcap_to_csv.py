@@ -21,7 +21,7 @@ OUT = Path("results/pcap_summary.csv")
 def run_tshark(pcap: Path, display_filter: str | None = None) -> List[Tuple[float, int]]:
     """Run tshark and return list of (time_epoch, frame.len) tuples.
 
-    If display_filter is None, defaults to packets touching port 9000 (both dirs).
+    If display_filter is None, defaults to DNS (53) e HTTP (8080).
     """
     cmd = [
         "tshark",
@@ -39,8 +39,7 @@ def run_tshark(pcap: Path, display_filter: str | None = None) -> List[Tuple[floa
     if display_filter:
         cmd.extend(["-Y", display_filter])
     else:
-        # default: any packet using port 9000 (either direction)
-        cmd.extend(["-Y", "tcp.port==9000 || udp.port==9000"])
+        cmd.extend(["-Y", "udp.port==53 || tcp.port==8080 || udp.port==8080"])
 
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
@@ -65,7 +64,9 @@ def analyze(pcap: Path):
         # records for any packet touching port 9000 (both directions)
         records_total = run_tshark(pcap, None)
         # records for client->server direction: destination port 9000
-        records_a2b = run_tshark(pcap, "tcp.dstport==9000 || udp.dstport==9000")
+        records_a2b = run_tshark(
+            pcap, "udp.dstport==53 || tcp.dstport==8080 || udp.dstport==8080"
+        )
     except Exception as e:
         print(f"pular {pcap}: {e}")
         return None
@@ -106,16 +107,21 @@ def analyze(pcap: Path):
     duration_a2b = end_a2b - start_a2b if (start_a2b is not None and end_a2b is not None and end_a2b > start_a2b) else 0.0
     throughput_a2b = (bytes_sum_a2b * 8.0) / (duration_a2b * 1_000_000.0) if duration_a2b > 0 else 0.0
 
-    # parse mode/scenario/run from path: results/pcaps/<mode>/<scenario>/capture_..._<run>.pcap
+    # parse mode/size/scenario/run from path:
+    # results/pcaps/<mode>/<size>/<scenario>/capture_..._<run>.pcap
     parts = pcap.parts
     mode = ""
+    file_size = ""
     scenario = ""
     run_id = ""
     try:
-        # find index of 'pcaps' in parts
         idx = parts.index("pcaps")
         mode = parts[idx + 1]
-        scenario = parts[idx + 2]
+        if len(parts) > idx + 3 and parts[idx + 2] in {"100k", "500k", "1m"}:
+            file_size = parts[idx + 2]
+            scenario = parts[idx + 3]
+        else:
+            scenario = parts[idx + 2]
     except Exception:
         pass
     name = pcap.stem
@@ -128,6 +134,7 @@ def analyze(pcap: Path):
     return {
         "pcap_path": str(pcap),
         "mode": mode,
+        "file_size": file_size,
         "scenario": scenario,
         "run_id": run_id,
         "pkts_on_wire": len(records_a2b) if records_a2b else 0,
@@ -161,6 +168,7 @@ def main() -> None:
             "run_id",
             "scenario",
             "mode",
+            "file_size",
             "pcap_path",
             "pkts_on_wire",
             "bytes_on_wire",
