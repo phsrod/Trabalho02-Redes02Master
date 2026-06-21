@@ -16,6 +16,7 @@ import pandas as pd
 
 SCENARIO_ORDER = ("A", "B", "C")
 MODE_ORDER = ("tcp", "rudp")
+FILE_SIZE_ORDER = ("100k", "500k", "1m")
 MODE_TITLES = {"tcp": "TCP", "rudp": "R-UDP"}
 
 
@@ -45,227 +46,270 @@ def _prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
+def _group_keys(df: pd.DataFrame) -> list[str]:
+    keys = ["scenario", "mode"]
+    if "file_size" in df.columns and df["file_size"].astype(str).str.strip().ne("").any():
+        keys.append("file_size")
+    return keys
+
+
 def _build_summary(df: pd.DataFrame) -> pd.DataFrame:
-    summary = (
-        df.groupby(["scenario", "mode"], as_index=False)
-        .agg(
-            runs=("run_id", "count") if "run_id" in df.columns else ("throughput_mbps", "count"),
-            throughput_min=("throughput_mbps", "min"),
-            throughput_mean=("throughput_mbps", "mean"),
-            throughput_max=("throughput_mbps", "max"),
-            throughput_std=("throughput_mbps", "std"),
-            duration_min=("duration_sec", "min"),
-            duration_mean=("duration_sec", "mean"),
-            duration_max=("duration_sec", "max"),
-            duration_std=("duration_sec", "std"),
+    group_keys = _group_keys(df)
+    agg: dict[str, tuple[str, str]] = {
+        "runs": ("run_id", "count") if "run_id" in df.columns else ("throughput_mbps", "count"),
+        "throughput_min": ("throughput_mbps", "min"),
+        "throughput_mean": ("throughput_mbps", "mean"),
+        "throughput_max": ("throughput_mbps", "max"),
+        "throughput_std": ("throughput_mbps", "std"),
+        "duration_min": ("duration_sec", "min"),
+        "duration_mean": ("duration_sec", "mean"),
+        "duration_max": ("duration_sec", "max"),
+        "duration_std": ("duration_sec", "std"),
+    }
+    if "dns_duration_sec" in df.columns:
+        agg.update(
+            {
+                "dns_duration_mean": ("dns_duration_sec", "mean"),
+                "dns_duration_std": ("dns_duration_sec", "std"),
+                "http_duration_mean": ("http_duration_sec", "mean"),
+                "http_duration_std": ("http_duration_sec", "std"),
+            }
         )
-        .reset_index(drop=True)
-    )
+    if "success" in df.columns:
+        agg["success_count"] = ("success", "sum")
+
+    summary = df.groupby(group_keys, as_index=False).agg(**agg).reset_index(drop=True)
 
     summary["throughput_std"] = summary["throughput_std"].fillna(0.0)
     summary["duration_std"] = summary["duration_std"].fillna(0.0)
+    if "dns_duration_std" in summary.columns:
+        summary["dns_duration_std"] = summary["dns_duration_std"].fillna(0.0)
+        summary["http_duration_std"] = summary["http_duration_std"].fillna(0.0)
     summary["runs"] = summary["runs"].astype(int)
+
+    if "success_count" in summary.columns:
+        summary["success_count"] = summary["success_count"].astype(int)
+        summary["success_rate"] = (summary["success_count"] / summary["runs"] * 100).round(2)
+        summary["error_rate"] = (100.0 - summary["success_rate"]).round(2)
+
     return summary
 
 
 def _save_metric_csv(summary: pd.DataFrame, metric_prefix: str, out_path: str) -> None:
-    columns = [
-        "scenario",
-        "mode",
-        "runs",
-        f"{metric_prefix}_min",
-        f"{metric_prefix}_mean",
-        f"{metric_prefix}_max",
-        f"{metric_prefix}_std",
-    ]
+    columns = ["scenario", "mode"]
+    if "file_size" in summary.columns:
+        columns.append("file_size")
+    columns.extend(
+        [
+            "runs",
+            f"{metric_prefix}_min",
+            f"{metric_prefix}_mean",
+            f"{metric_prefix}_max",
+            f"{metric_prefix}_std",
+        ]
+    )
     summary.loc[:, columns].to_csv(out_path, index=False)
 
 
-def _annotate_points(axis: plt.Axes, x: np.ndarray, values: list[float], offset_y: int = 6) -> None:
-    for x_value, y_value in zip(x, values, strict=True):
-        axis.annotate(
-            f"{y_value:.3f}",
-            (x_value, y_value),
-            textcoords="offset points",
-            xytext=(0, offset_y),
-            ha="center",
-            fontsize=8,
-            color="#222222",
+
+
+
+def _save_dns_http_breakdown(summary: pd.DataFrame, out_dir: str) -> None:
+    if "dns_duration_mean" not in summary.columns:
+        return
+    compare_dir = os.path.join(out_dir, "compare")
+    os.makedirs(compare_dir, exist_ok=True)
+    scenarios = _ordered_values(summary["scenario"].unique(), SCENARIO_ORDER)
+    x = np.arange(len(scenarios))
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    for mode in _ordered_values(summary["mode"].unique(), MODE_ORDER):
+        subset = summary[summary["mode"] == mode].groupby("scenario", as_index=False).agg(
+            dns_duration_mean=("dns_duration_mean", "mean"),
+            http_duration_mean=("http_duration_mean", "mean"),
         )
+        subset = subset.set_index("scenario")
+        dns_vals = [float(subset.loc[s, "dns_duration_mean"]) if s in subset.index else 0.0 for s in scenarios]
+        http_vals = [float(subset.loc[s, "http_duration_mean"]) if s in subset.index else 0.0 for s in scenarios]
+        ax.plot(x, dns_vals, marker="s", linestyle="--", label=f"DNS ({MODE_TITLES.get(mode, mode)})")
+        ax.plot(x, http_vals, marker="o", label=f"HTTP ({MODE_TITLES.get(mode, mode)})")
+    ax.set_xticks(x)
+    ax.set_xticklabels(scenarios)
+    ax.set_xlabel("Cenário")
+    ax.set_ylabel("Tempo médio (s)")
+    ax.set_title("DNS (UDP) vs HTTP — tempo médio por cenário")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    out_png = os.path.join(compare_dir, "dns_vs_http_duration.png")
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=150)
+    plt.close(fig)
 
 
-def _plot_metric_lines_by_protocol(
+# ── Combined comparison graphs (side-by-side TCP | R-UDP) ────────────────
+
+_COMBINED_SIZE_STYLES = {
+    "100k": {"color": "#1f77b4", "marker": "o"},
+    "500k": {"color": "#ff7f0e", "marker": "s"},
+    "1m":   {"color": "#2ca02c", "marker": "^"},
+}
+
+
+def _plot_mode_subplot(
+    ax: plt.Axes,
     summary: pd.DataFrame,
-    metric_prefix: str,
-    ylabel: str,
-    title: str,
-    out_path: str,
+    mode: str,
+    metric_col: str,
+    scenarios: list[str],
+    file_sizes: list[str],
+    fmt_pct: bool = False,
 ) -> None:
-    scenarios = _ordered_values(summary["scenario"].unique(), SCENARIO_ORDER)
-    mode = str(summary["mode"].iloc[0]) if not summary.empty else ""
-    mode_title = MODE_TITLES.get(mode, mode.upper() if mode else "")
-
-    fig, axes = plt.subplots(
-        2,
-        2,
-        figsize=(11.5, 8.0),
-        sharex=True,
-    )
-    axes = np.atleast_1d(axes)
-
-    stat_keys = [
-        ("min", "Mínimo", "#DD8452"),
-        ("mean", "Média", "#4C72B0"),
-        ("max", "Máximo", "#55A868"),
-        ("std", "Desvio padrão", "#C44E52"),
-    ]
-
+    """Draw 3 lines (one per file_size) for a single protocol on a subplot axis."""
     x = np.arange(len(scenarios))
 
-    subset = summary.set_index("scenario")
-    for axis, (stat_suffix, stat_label, color) in zip(axes.flat, stat_keys, strict=True):
+    for size in file_sizes:
+        subset = summary[
+            (summary["mode"] == mode) & (summary["file_size"] == size)
+        ].set_index("scenario")
+
         values = [
-            float(subset.loc[scenario, f"{metric_prefix}_{stat_suffix}"])
-            if scenario in subset.index
-            else 0.0
-            for scenario in scenarios
+            float(subset.loc[sc, metric_col]) if sc in subset.index else 0.0
+            for sc in scenarios
         ]
-        axis.plot(
-            x,
-            values,
-            marker="o",
+
+        style = _COMBINED_SIZE_STYLES.get(size, {"color": "#333333", "marker": "o"})
+
+        ax.plot(
+            x, values,
+            marker=style["marker"],
+            linestyle="solid",
+            color=style["color"],
             linewidth=2.0,
-            color=color,
-            label=stat_label,
-        )
-        _annotate_points(axis, x, values)
-        axis.set_title(stat_label)
-        axis.set_xticks(x)
-        axis.set_xticklabels(scenarios)
-        axis.grid(True, axis="both", alpha=0.3)
-        axis.set_axisbelow(True)
-        axis.legend(loc="best")
-
-    for axis in axes.flat:
-        axis.set_xlabel("Cenário")
-        axis.set_ylabel(ylabel)
-
-    fig.suptitle(f"{title} - {mode_title}" if mode_title else title)
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
-    fig.savefig(out_path, dpi=170)
-
-
-def _save_protocol_figures(summary: pd.DataFrame, args_out_dir: str) -> None:
-    # prepare protocol dirs
-    tcp_dir = os.path.join(args_out_dir, "tcp")
-    rudp_dir = os.path.join(args_out_dir, "rudp")
-    os.makedirs(tcp_dir, exist_ok=True)
-    os.makedirs(rudp_dir, exist_ok=True)
-
-    for mode in _ordered_values(summary["mode"].unique(), MODE_ORDER):
-        mode_summary = summary[summary["mode"] == mode]
-        mode_dir = tcp_dir if mode == "tcp" else rudp_dir
-        throughput_out = os.path.join(mode_dir, f"throughput_{mode}_lines.png")
-        duration_out = os.path.join(mode_dir, f"duration_{mode}_lines.png")
-
-        _plot_metric_lines_by_protocol(
-            mode_summary,
-            "throughput",
-            "Vazão (Mbps)",
-            f"Vazão por cenário - {MODE_TITLES.get(mode, mode.upper())}",
-            throughput_out,
-        )
-        _plot_metric_lines_by_protocol(
-            mode_summary,
-            "duration",
-            "Tempo (s)",
-            f"Tempo por cenário - {MODE_TITLES.get(mode, mode.upper())}",
-            duration_out,
+            label=size,
         )
 
+        annot_fmt = ".1f" if fmt_pct else ".3f"
+        for xi, yi in zip(x, values):
+            ax.annotate(
+                f"{yi:{annot_fmt}}{'%' if fmt_pct else ''}",
+                (xi, yi),
+                textcoords="offset points",
+                xytext=(0, 6),
+                ha="center",
+                fontsize=7,
+                color=style["color"],
+            )
 
-def _save_individual_stat_figures(summary: pd.DataFrame, args_out_dir: str) -> None:
-    """Save one PNG per protocol/metric/statistic (e.g. throughput_tcp_mean.png)."""
-    stats = [("min", "Mínimo"), ("mean", "Média"), ("max", "Máximo"), ("std", "Desvio padrão")]
-    scenarios = _ordered_values(summary["scenario"].unique(), SCENARIO_ORDER)
-    x = np.arange(len(scenarios))
-    tcp_dir = os.path.join(args_out_dir, "tcp")
-    rudp_dir = os.path.join(args_out_dir, "rudp")
-    os.makedirs(tcp_dir, exist_ok=True)
-    os.makedirs(rudp_dir, exist_ok=True)
-
-    for mode in _ordered_values(summary["mode"].unique(), MODE_ORDER):
-        subset = summary[summary["mode"] == mode].set_index("scenario")
-        mode_dir = tcp_dir if mode == "tcp" else rudp_dir
-        for metric_prefix, ylabel in (("throughput", "Vazão (Mbps)"), ("duration", "Tempo (s)")):
-            for stat_suffix, stat_label in stats:
-                values = [
-                    float(subset.loc[scenario, f"{metric_prefix}_{stat_suffix}"])
-                    if scenario in subset.index
-                    else 0.0
-                    for scenario in scenarios
-                ]
-                fig, ax = plt.subplots(figsize=(7, 4))
-                ax.plot(x, values, marker="o", linewidth=2.0)
-                _annotate_points(ax, x, values)
-                ax.set_xticks(x)
-                ax.set_xticklabels(scenarios)
-                ax.set_xlabel("Cenário")
-                ax.set_ylabel(ylabel)
-                ax.set_title(f"{MODE_TITLES.get(mode, mode.upper())} — {metric_prefix.capitalize()} ({stat_label})")
-                ax.grid(True, alpha=0.3)
-                out_png = os.path.join(mode_dir, f"{metric_prefix}_{mode}_{stat_suffix}.png")
-                fig.tight_layout()
-                fig.savefig(out_png, dpi=150)
-                plt.close(fig)
+    ax.set_xticks(x)
+    ax.set_xticklabels(scenarios)
+    ax.set_xlabel("Cenário")
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8, loc="best", title="Tamanho")
 
 
-def _save_compare_stat_figures(summary: pd.DataFrame, args_out_dir: str) -> None:
-    """Save comparison PNGs per statistic showing both protocols across scenarios."""
-    stats = [("min", "Mínimo"), ("mean", "Média"), ("max", "Máximo"), ("std", "Desvio padrão")]
-    scenarios = _ordered_values(summary["scenario"].unique(), SCENARIO_ORDER)
-    x = np.arange(len(scenarios))
-    compare_dir = os.path.join(args_out_dir, "compare")
+def _save_combined_compare_figures(summary: pd.DataFrame, out_dir: str) -> None:
+    """Generate 6 side-by-side comparison PNGs in compare/ (TCP | R-UDP)."""
+    compare_dir = os.path.join(out_dir, "compare")
     os.makedirs(compare_dir, exist_ok=True)
 
-    for metric_prefix, ylabel in (("throughput", "Vazão (Mbps)"), ("duration", "Tempo (s)")):
-        for stat_suffix, stat_label in stats:
-            fig, ax = plt.subplots(figsize=(8, 4.5))
-            for mode in _ordered_values(summary["mode"].unique(), MODE_ORDER):
-                subset = summary[summary["mode"] == mode].set_index("scenario")
-                values = [
-                    float(subset.loc[scenario, f"{metric_prefix}_{stat_suffix}"])
-                    if scenario in subset.index
-                    else 0.0
-                    for scenario in scenarios
-                ]
-                ax.plot(x, values, marker="o", linewidth=2.0, label=MODE_TITLES.get(mode, mode.upper()))
-                # Ajuste de posição dos rótulos:
-                # - Duração média: TCP embaixo
-                # - Todos os gráficos de vazão: R-UDP embaixo
-                if metric_prefix == "duration" and stat_suffix == "mean" and mode == "tcp":
-                    _annotate_points(ax, x, values, offset_y=-12)
-                elif metric_prefix == "throughput" and mode == "rudp":
-                    _annotate_points(ax, x, values, offset_y=-12)
-                else:
-                    _annotate_points(ax, x, values)
-            ax.set_xticks(x)
-            ax.set_xticklabels(scenarios)
-            ax.set_xlabel("Cenário")
-            ax.set_ylabel(ylabel)
-            ax.set_title(f"Comparação por cenário — {metric_prefix.capitalize()} ({stat_label})")
-            ax.grid(True, alpha=0.3)
-            ax.legend()
-            out_png = os.path.join(compare_dir, f"{metric_prefix}_{stat_suffix}_compare.png")
-            fig.tight_layout()
-            fig.savefig(out_png, dpi=150)
-            plt.close(fig)
+    if "file_size" not in summary.columns:
+        return
+
+    scenarios = _ordered_values(summary["scenario"].unique(), SCENARIO_ORDER)
+    file_sizes = _ordered_values(summary["file_size"].unique(), FILE_SIZE_ORDER)
+    modes = _ordered_values(summary["mode"].unique(), MODE_ORDER)
+
+    if not scenarios or not file_sizes or not modes:
+        return
+
+    # 1) Duration mean
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=False)
+    for ax, mode in zip(axes, modes):
+        _plot_mode_subplot(ax, summary, mode, "duration_mean", scenarios, file_sizes)
+        ax.set_title(MODE_TITLES.get(mode, mode.upper()))
+    axes[0].set_ylabel("Tempo médio (s)")
+    fig.suptitle("Duração média total (DNS + HTTP)", fontsize=13)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(os.path.join(compare_dir, "duration_combined.png"), dpi=150)
+    plt.close(fig)
+
+    # 2-5) Throughput stats
+    for stat, label in [("min", "Mínima"), ("mean", "Média"), ("max", "Máxima"), ("std", "Desvio Padrão")]:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=False)
+        for ax, mode in zip(axes, modes):
+            _plot_mode_subplot(
+                ax, summary, mode, f"throughput_{stat}", scenarios, file_sizes
+            )
+            ax.set_title(MODE_TITLES.get(mode, mode.upper()))
+        axes[0].set_ylabel(f"Vazão {label.lower()} (Mbps)")
+        fig.suptitle(f"Vazão {label}", fontsize=13)
+        fig.tight_layout(rect=(0, 0, 1, 0.94))
+        fig.savefig(os.path.join(compare_dir, f"throughput_{stat}_combined.png"), dpi=150)
+        plt.close(fig)
+
+    # 6) Error rate
+    if "error_rate" in summary.columns:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=False)
+        for ax, mode in zip(axes, modes):
+            _plot_mode_subplot(
+                ax, summary, mode, "error_rate", scenarios, file_sizes, fmt_pct=True
+            )
+            ax.set_title(MODE_TITLES.get(mode, mode.upper()))
+        axes[0].set_ylabel("Taxa de erro (%)")
+        fig.suptitle("Taxa de erro", fontsize=13)
+        fig.tight_layout(rect=(0, 0, 1, 0.94))
+        fig.savefig(os.path.join(compare_dir, "error_rate_combined.png"), dpi=150)
+        plt.close(fig)
+
+
+def _merge_retransmission_rate(summary: pd.DataFrame, retrans_csv_path: str) -> pd.DataFrame:
+    """Carrega o CSV de retransmissão e mescla a taxa de erro real no summary.
+
+    A coluna ``error_rate`` do summary é substituída pela média das taxas de
+    retransmissão agregadas por (scenario, mode, file_size).
+    """
+    if not os.path.isfile(retrans_csv_path):
+        print(f"Aviso: arquivo de retransmissão não encontrado: {retrans_csv_path}", file=sys.stderr)
+        return summary
+
+    retrans_df = pd.read_csv(retrans_csv_path)
+
+    group_keys = _group_keys(summary)
+    # Agrega a taxa de erro média por grupo
+    retrans_agg = (
+        retrans_df.groupby(
+            [k for k in group_keys if k in retrans_df.columns],
+            as_index=False,
+        )["error_rate_pct"]
+        .mean()
+        .round(2)
+        .rename(columns={"error_rate_pct": "error_rate_retrans"})
+    )
+
+    merged = summary.merge(
+        retrans_agg,
+        on=[k for k in group_keys if k in retrans_agg.columns],
+        how="left",
+    )
+
+    # Substitui error_rate onde houver dado de retransmissão
+    if "error_rate_retrans" in merged.columns:
+        has_retrans = merged["error_rate_retrans"].notna()
+        merged.loc[has_retrans, "error_rate"] = merged.loc[has_retrans, "error_rate_retrans"]
+        merged = merged.drop(columns=["error_rate_retrans"])
+        print(f"  → Taxa de erro real (retransmissões) mesclada de: {retrans_csv_path}")
+
+    return merged
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Gera estatísticas e gráficos comparativos por protocolo.")
     p.add_argument("csv_path", help="CSV com colunas: scenario, mode, duration_sec, throughput_mbps, ...")
     p.add_argument("--out-dir", default="results/plots")
+    p.add_argument(
+        "--retransmission-csv",
+        default="",
+        help="CSV gerado por calculate_error_rate.py com taxas de retransmissão (opcional)",
+    )
     args = p.parse_args()
 
     if not os.path.isfile(args.csv_path):
@@ -277,6 +321,10 @@ def main() -> None:
 
     summary = _build_summary(df)
 
+    # Mescla taxa de erro baseada em retransmissões (se fornecido)
+    if args.retransmission_csv:
+        summary = _merge_retransmission_rate(summary, args.retransmission_csv)
+
     summary_out = os.path.join(args.out_dir, "stats_summary.csv")
     summary.to_csv(summary_out, index=False)
     _save_metric_csv(summary, "throughput", os.path.join(args.out_dir, "stats_throughput.csv"))
@@ -285,15 +333,20 @@ def main() -> None:
     print("Estatísticas agregadas por cenário e modo:\n")
     print(summary.to_string(index=False))
 
-    _save_protocol_figures(summary, args.out_dir)
-    # also save individual-stat files per protocol and comparison figures across protocols
-    _save_individual_stat_figures(summary, args.out_dir)
-    _save_compare_stat_figures(summary, args.out_dir)
+    _save_dns_http_breakdown(summary, args.out_dir)
+    _save_combined_compare_figures(summary, args.out_dir)
 
     print(f"\nResumo: {summary_out}")
-    for mode in _ordered_values(summary["mode"].unique(), MODE_ORDER):
-        print(f"Gráfico de vazão ({mode}): {os.path.join(args.out_dir, f'throughput_{mode}_lines.png')}")
-        print(f"Gráfico de tempo ({mode}): {os.path.join(args.out_dir, f'duration_{mode}_lines.png')}")
+    print(f"Gráficos combinados gerados em: {os.path.join(args.out_dir, 'compare/')}")
+    print("  - duration_combined.png")
+    print("  - throughput_min_combined.png")
+    print("  - throughput_mean_combined.png")
+    print("  - throughput_max_combined.png")
+    print("  - throughput_std_combined.png")
+    if "error_rate" in summary.columns:
+        print("  - error_rate_combined.png")
+    print("  - dns_vs_http_duration.png")
+    print(f"CSV de estatísticas: {summary_out}")
 
 
 if __name__ == "__main__":
