@@ -3,7 +3,6 @@ __pycache__/
 *.pyc
 .venv/
 *.bin
-*.log
 inbox/
-results/
-docs/
+retransmission_rate.csv
+results/plots/*.csv
